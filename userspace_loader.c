@@ -1,55 +1,50 @@
 #include <stdio.h>
-#include <stdlib.h>
 #include <unistd.h>
+#include <stdlib.h>
 #include <bpf/libbpf.h>
-#include "offcpu.bpf.h"
+#include <bpf/bpf.h>
 
-#define INTERVAL 2
-
-int main() {
+int main(int argc, char **argv) {
     struct bpf_object *obj;
-    int err;
+    int prog_fd, map_fd;
+    char filename[] = "offcpu.bpf.o";
 
-    // Load BPF program
-    obj = bpf_object__open_file("offcpu.bpf.o", NULL);
-    if (!obj) {
-        fprintf(stderr, "Failed to open BPF object\n");
+    obj = bpf_object__open_file(filename, NULL);
+    if (libbpf_get_error(obj)) {
+        fprintf(stderr, "Failed to open BPF object file: %s\n", filename);
         return 1;
     }
 
-    err = bpf_object__load(obj);
-    if (err) {
+    if (bpf_object__load(obj)) {
         fprintf(stderr, "Failed to load BPF object\n");
-        bpf_object__close(obj);
         return 1;
     }
 
-    // Attach BPF program to tracepoint
-    struct bpf_program *prog;
-    prog = bpf_object__find_program_by_title(obj, "tracepoint/sched/sched_switch");
+    struct bpf_program *prog = bpf_object__find_program_by_name(obj, "handle_sched_switch");
     if (!prog) {
         fprintf(stderr, "Failed to find BPF program\n");
-        bpf_object__close(obj);
         return 1;
     }
 
-    int prog_fd = bpf_program__fd(prog);
+    prog_fd = bpf_program__fd(prog);
     if (prog_fd < 0) {
-        fprintf(stderr, "Failed to get BPF program file descriptor\n");
-        bpf_object__close(obj);
+        fprintf(stderr, "Failed to get BPF program FD\n");
         return 1;
     }
 
     if (bpf_prog_attach(prog_fd, 0, BPF_TRACE_FENTRY, 0) < 0) {
-        fprintf(stderr, "Failed to attach BPF program\n");
-        bpf_object__close(obj);
+        perror("Failed to attach BPF program");
         return 1;
     }
 
-    printf("BPF tracepoint program attached. Press ENTER to exit...\n");
+    printf("BPF program attached. Press ENTER to exit...\n");
     getchar();
 
-    bpf_prog_detach(prog_fd, BPF_TRACE_FENTRY);
+    if (bpf_prog_detach(prog_fd, BPF_TRACE_FENTRY) < 0) {
+        perror("Failed to detach BPF program");
+        return 1;
+    }
+
     bpf_object__close(obj);
     return 0;
 }

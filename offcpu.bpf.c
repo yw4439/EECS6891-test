@@ -1,43 +1,42 @@
-#include "vmlinux.h"
+#include <linux/bpf.h>
 #include <bpf/bpf_helpers.h>
-#include <bpf/bpf_core_read.h>
 
-// Define maps for storing data
+// Define maps directly here
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
-    __type(key, u64);           // PID key
-    __type(value, u64);         // Start timestamp value
     __uint(max_entries, 1024);
+    __type(key, u32);
+    __type(value, u64);
 } start_time SEC(".maps");
 
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
-    __type(key, u64);           // Time delta in microseconds
-    __type(value, u64);         // Histogram bucket count
     __uint(max_entries, 1024);
+    __type(key, u64);
+    __type(value, u64);
 } offcpu_histogram SEC(".maps");
 
-// BPF program to trace task switches
+// BPF program for the scheduler switch tracepoint
 SEC("tracepoint/sched/sched_switch")
-int trace_sched_switch(struct task_struct *prev, struct task_struct *next) {
-    u64 ts = bpf_ktime_get_ns();  // Current timestamp in nanoseconds
+int handle_sched_switch(struct task_struct *prev, struct task_struct *next) {
+    u64 key, *value;
+    u64 ts = bpf_ktime_get_ns();
     u64 prev_pid, next_pid;
 
-    // Read PIDs of previous and next tasks
     bpf_core_read(&prev_pid, sizeof(prev_pid), &prev->pid);
     bpf_core_read(&next_pid, sizeof(next_pid), &next->pid);
 
-    // Track off-CPU time for TASK_RUNNING state
     u32 prev_flags;
     bpf_core_read(&prev_flags, sizeof(prev_flags), &prev->flags);
-    if (prev_flags & (1 << 0)) {  // TASK_RUNNING check
+
+    if (prev_flags & (1 << 0)) {
         bpf_map_update_elem(&start_time, &prev_pid, &ts, BPF_ANY);
     }
 
-    u64 *start = bpf_map_lookup_elem(&start_time, &next_pid);
-    if (start) {
-        u64 delta = ts - *start;
-        u64 key = delta / 1000;  // Convert to microseconds
+    value = bpf_map_lookup_elem(&start_time, &next_pid);
+    if (value) {
+        u64 delta = ts - *value;
+        key = delta / 1000;
         u64 *count = bpf_map_lookup_elem(&offcpu_histogram, &key);
 
         if (count) {
@@ -53,4 +52,4 @@ int trace_sched_switch(struct task_struct *prev, struct task_struct *next) {
     return 0;
 }
 
-char LICENSE[] SEC("license") = "GPL";
+char _license[] SEC("license") = "GPL";
