@@ -1,25 +1,39 @@
-CC = clang
-CFLAGS = -O2 -g -Wall -target bpf \
--I/usr/include \
--I/usr/include/asm \
--I/usr/include/i386-linux-gnu \
--I/usr/include/x86_64-linux-gnu \
--I/usr/src/linux-headers-$(uname -r)/arch/x86/include \
--I/usr/src/linux-headers-$(uname -r)/arch/x86/include/uapi \
--I/usr/src/linux-headers-$(uname -r)/include/uapi \
--I/usr/src/linux-headers-$(uname -r)/include/generated/uapi \
--I/usr/lib/llvm-14/include
+# Define the compiler and the flags
+CLANG ?= clang
+CFLAGS = -O2 -target bpf -c -g
+USERSPACE_CFLAGS = -O2 -Wall -I/usr/include
+USERSPACE_LINKER_FLAGS = -lbpf -lelf
 
-BPF_PROG = offcpu.bpf.o
-LOADER = userspace_loader
+# Userspace programs
+USERSPACE_SRC = userspace_loader.c
+USERSPACE_BIN = $(USERSPACE_SRC:.c=)
 
-all: $(BPF_PROG) $(LOADER)
+# Define the BPF program source and the output object file
+BPF_SRC = offcpu.bpf.c
+BPF_OBJ = $(BPF_SRC:.c=.o)
 
-$(BPF_PROG): offcpu.bpf.c
-	$(CC) $(CFLAGS) -c $< -o $@
+# Get Clang's default includes on this system
+CLANG_BPF_SYS_INCLUDES ?= $(shell $(CLANG) -v -E - </dev/null 2>&1 \
+	| sed -n '/<...> search starts here:/,/End of search list./{ s| \(/.*\)|-idirafter \1|p }')
 
-$(LOADER): userspace_loader.c
-	gcc -o $@ $< -lbpf -lelf
+all: $(BPF_OBJ) $(USERSPACE_BIN)
+
+# Compile BPF program
+$(BPF_OBJ): $(BPF_SRC) vmlinux.h
+	$(CLANG) $(CFLAGS) $(CLANG_BPF_SYS_INCLUDES) $(BPF_SRC) -o $(BPF_OBJ)
+
+# Compile userspace program
+$(USERSPACE_BIN): $(USERSPACE_SRC)
+	$(CLANG) $(USERSPACE_CFLAGS) $(USERSPACE_SRC) -o $(USERSPACE_BIN) $(USERSPACE_LINKER_FLAGS)
+
+# Generate vmlinux.h if it does not exist
+vmlinux.h:
+	bpftool btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h
 
 clean:
-	rm -f $(BPF_PROG) $(LOADER)
+	rm -f $(BPF_OBJ) $(USERSPACE_BIN)
+
+cleanall: clean
+	rm -f vmlinux.h
+
+.PHONY: all clean cleanall

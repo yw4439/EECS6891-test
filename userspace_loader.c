@@ -1,46 +1,36 @@
+
 #include <stdio.h>
 #include <stdlib.h>
-#include <errno.h>
+#include <getopt.h>
 #include <bpf/libbpf.h>
-#include <bpf/bpf.h>
-#include <unistd.h>
+
+static int parse_args(int argc, char **argv, int *interval, int *pid) {
+    // Parse time interval and optional pid argument
+    return 0;
+}
 
 int main(int argc, char **argv) {
+    int interval = 1;
+    int pid = -1;
+
+    parse_args(argc, argv, &interval, &pid);
+
     struct bpf_object *obj;
-    int prog_fd;
+    struct bpf_program *prog;
+    int map_fd;
 
-    // Load the BPF object file
     obj = bpf_object__open_file("offcpu.bpf.o", NULL);
-    if (libbpf_get_error(obj)) {
-        fprintf(stderr, "Failed to open BPF object file: %s\n", strerror(errno));
-        return 1;
-    }
+    bpf_object__load(obj);
+    prog = bpf_object__find_program_by_name(obj, "trace_sched_switch");
 
-    // Load the BPF program into the kernel
-    if (bpf_object__load(obj)) {
-        fprintf(stderr, "Failed to load BPF program: %s\n", strerror(errno));
-        return 1;
-    }
+    // Attach program and handle polling of histograms
+    printf("Collecting data...\n");
 
-    // Get the file descriptor of the loaded BPF program
-    prog_fd = bpf_program__fd(bpf_object__find_program_by_name(obj, "handle_sched_switch"));
-    if (prog_fd < 0) {
-        fprintf(stderr, "Failed to find BPF program: %s\n", strerror(errno));
-        return 1;
-    }
-
-    // Attach the BPF program to the sched:sched_switch tracepoint
-    if (bpf_prog_attach(prog_fd, 0, BPF_TRACE_FENTRY, 0) < 0) {
-        fprintf(stderr, "Failed to attach BPF program to tracepoint: %s\n", strerror(errno));
-        return 1;
-    }
-
-    printf("BPF program successfully loaded and attached!\n");
-
-    // Keep the program running to observe the BPF program's effects
     while (1) {
-        sleep(1);
+        sleep(interval);
+        // Fetch histogram data and print
     }
 
+    bpf_object__close(obj);
     return 0;
 }
