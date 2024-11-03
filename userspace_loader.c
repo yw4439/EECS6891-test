@@ -1,50 +1,54 @@
 #include <stdio.h>
-#include <unistd.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <bpf/libbpf.h>
-#include <bpf/bpf.h>
 
-int main(int argc, char **argv) {
+#define INTERVAL 2
+
+int main() {
     struct bpf_object *obj;
-    int prog_fd, map_fd;
-    char filename[] = "offcpu.bpf.o";
+    int err;
 
-    obj = bpf_object__open_file(filename, NULL);
-    if (libbpf_get_error(obj)) {
-        fprintf(stderr, "Failed to open BPF object file: %s\n", filename);
+    // Load BPF program
+    obj = bpf_object__open_file("offcpu.bpf.o", NULL);
+    if (!obj) {
+        fprintf(stderr, "Failed to open BPF object\n");
         return 1;
     }
 
-    if (bpf_object__load(obj)) {
+    err = bpf_object__load(obj);
+    if (err) {
         fprintf(stderr, "Failed to load BPF object\n");
+        bpf_object__close(obj);
         return 1;
     }
 
-    struct bpf_program *prog = bpf_object__find_program_by_name(obj, "handle_sched_switch");
+    // Attach BPF program to tracepoint
+    struct bpf_program *prog;
+    prog = bpf_object__find_program_by_title(obj, "tracepoint/sched/sched_switch");
     if (!prog) {
         fprintf(stderr, "Failed to find BPF program\n");
+        bpf_object__close(obj);
         return 1;
     }
 
-    prog_fd = bpf_program__fd(prog);
+    int prog_fd = bpf_program__fd(prog);
     if (prog_fd < 0) {
-        fprintf(stderr, "Failed to get BPF program FD\n");
+        fprintf(stderr, "Failed to get BPF program file descriptor\n");
+        bpf_object__close(obj);
         return 1;
     }
 
     if (bpf_prog_attach(prog_fd, 0, BPF_TRACE_FENTRY, 0) < 0) {
-        perror("Failed to attach BPF program");
+        fprintf(stderr, "Failed to attach BPF program\n");
+        bpf_object__close(obj);
         return 1;
     }
 
-    printf("BPF program attached. Press ENTER to exit...\n");
+    printf("BPF tracepoint program attached. Press ENTER to exit...\n");
     getchar();
 
-    if (bpf_prog_detach(prog_fd, BPF_TRACE_FENTRY) < 0) {
-        perror("Failed to detach BPF program");
-        return 1;
-    }
-
+    bpf_prog_detach(prog_fd, BPF_TRACE_FENTRY);
     bpf_object__close(obj);
     return 0;
 }
