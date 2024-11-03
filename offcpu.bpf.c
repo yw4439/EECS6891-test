@@ -1,7 +1,9 @@
 #include <linux/bpf.h>
 #include <bpf/bpf_helpers.h>
+#include <bpf/bpf_core_read.h>
+#include <linux/types.h>
 
-// Define maps directly here
+// Define maps
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 1024);
@@ -15,6 +17,12 @@ struct {
     __type(key, u64);
     __type(value, u64);
 } offcpu_histogram SEC(".maps");
+
+// Minimal struct task_struct definition for eBPF usage
+struct task_struct {
+    u32 pid;
+    u32 flags;
+};
 
 // BPF program for the scheduler switch tracepoint
 SEC("tracepoint/sched/sched_switch")
