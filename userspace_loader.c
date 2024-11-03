@@ -6,7 +6,7 @@
 
 int main(int argc, char **argv) {
     struct bpf_object *obj;
-    int prog_fd, map_fd;
+    int prog_fd;
     char filename[] = "offcpu.bpf.o";
 
     obj = bpf_object__open_file(filename, NULL);
