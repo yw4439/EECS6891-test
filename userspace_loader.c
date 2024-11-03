@@ -1,59 +1,59 @@
-#include <bpf/libbpf.h>
-#include <unistd.h>  // For sleep
 #include <stdio.h>
 #include <stdlib.h>
-#include <signal.h>
+#include <unistd.h>          // For sleep()
+#include <bpf/bpf.h>         // For BPF-related functions
+#include <bpf/libbpf.h>      // For libbpf functions
+#include "vmlinux.h"         // Use quotes for local vmlinux.h
+#include "offcpu.bpf.h"      // This should match the name of your BPF program header
 
-static int running = 1;
+#define INTERVAL 2           // Polling interval in seconds
 
-void handle_signal(int sig) {
-    running = 0;
-}
-
-int main() {
+int main(int argc, char **argv) {
     struct bpf_object *obj;
-    int prog_fd;
+    int prog_fd, map_fd;
 
-    signal(SIGINT, handle_signal);
-
+    // Load BPF program from object file
     obj = bpf_object__open_file("offcpu.bpf.o", NULL);
     if (!obj) {
-        fprintf(stderr, "Error opening BPF object file.\n");
+        fprintf(stderr, "Failed to open BPF object file\n");
         return 1;
     }
 
     if (bpf_object__load(obj)) {
-        fprintf(stderr, "Error loading BPF program.\n");
+        fprintf(stderr, "Failed to load BPF object\n");
         return 1;
     }
 
+    // Get file descriptor for BPF program
     struct bpf_program *prog = bpf_object__find_program_by_name(obj, "trace_sched_switch");
     if (!prog) {
-        fprintf(stderr, "Error finding BPF program by name.\n");
+        fprintf(stderr, "Failed to find BPF program by name\n");
         return 1;
     }
-
     prog_fd = bpf_program__fd(prog);
     if (prog_fd < 0) {
-        fprintf(stderr, "Error getting program file descriptor.\n");
+        fprintf(stderr, "Failed to get BPF program file descriptor\n");
         return 1;
     }
 
-    if (bpf_prog_attach(prog_fd, 0, BPF_TRACE_FENTRY, 0)) {
-        fprintf(stderr, "Error attaching BPF program.\n");
+    // Attach BPF program to the tracepoint
+    if (bpf_prog_attach(prog_fd, 0, BPF_TRACE_FENTRY, 0) < 0) {
+        perror("Failed to attach BPF program");
         return 1;
     }
+    printf("BPF tracepoint program attached. Press ENTER to exit...\n");
 
-    printf("BPF program attached. Press Ctrl+C to exit...\n");
-
-    while (running) {
-        sleep(1);
+    // Polling loop to keep the program running
+    while (1) {
+        sleep(INTERVAL);
+        // Here you could add code to fetch data from your BPF maps if needed
     }
 
-    bpf_prog_detach(prog_fd, BPF_TRACE_FENTRY);
+    // Detach the BPF program
+    if (bpf_prog_detach(prog_fd, BPF_TRACE_FENTRY) < 0) {
+        perror("Failed to detach BPF program");
+    }
+
     bpf_object__close(obj);
-
-    printf("BPF program detached and resources cleaned up.\n");
-
     return 0;
 }
