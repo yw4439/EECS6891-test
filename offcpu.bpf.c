@@ -1,72 +1,59 @@
 #include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_core_read.h>
-#include <bpf/bpf_tracing.h>
 
-// Define constants
-#define MAX_ENTRIES 10240
-#define TASK_RUNNING 0
-
-// Histogram map to store off-CPU times
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, MAX_ENTRIES);
-    __type(key, u64);         // Key is the off-CPU time (in microseconds)
-    __type(value, u64);       // Value is the count (frequency of occurrence)
-} offcpu_histogram SEC(".maps");
-
-// Map to store the start times (in nanoseconds) for tasks
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, MAX_ENTRIES);
-    __type(key, u32);         // Key is the PID (process ID)
-    __type(value, u64);       // Value is the timestamp in nanoseconds
+    __type(key, u64);    // pid of the task
+    __type(value, u64);  // start timestamp
+    __uint(max_entries, 1024);
 } start_time SEC(".maps");
 
-// Function to handle the sched_switch event
-static int trace_sched_switch(struct task_struct *prev, struct task_struct *next) {
-    u64 ts = bpf_ktime_get_ns();  // Get current timestamp in nanoseconds
-    u32 prev_pid = BPF_CORE_READ(prev, pid);  // Get PID of the previous task
-    u32 next_pid = BPF_CORE_READ(next, pid);  // Get PID of the next task
-    u64 *start_ts, delta;
-    
-    // New method: Get the state of the previous task using task_state in newer kernels
-    long prev_state = BPF_CORE_READ(prev, __state);
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __type(key, u64);    // latency (in microseconds)
+    __type(value, u64);  // histogram count
+    __uint(max_entries, 1024);
+} offcpu_histogram SEC(".maps");
 
-    // If the previous task was running, record its start time
-    if (prev_state == TASK_RUNNING) {
-        bpf_map_update_elem(&start_time, &prev_pid, &ts, BPF_ANY);  // Store start time
+SEC("tracepoint/sched/sched_switch")
+int trace_sched_switch(struct task_struct *prev, struct task_struct *next) {
+    u64 key, *value;
+    u64 ts = bpf_ktime_get_ns();  // Current timestamp in nanoseconds
+    u64 prev_pid, next_pid;
+
+    // Read task_struct fields safely
+    bpf_core_read(&prev_pid, sizeof(prev_pid), &prev->pid);
+    bpf_core_read(&next_pid, sizeof(next_pid), &next->pid);
+
+    // Use flags instead of state to check for TASK_RUNNING
+    u32 prev_flags;
+    bpf_core_read(&prev_flags, sizeof(prev_flags), &prev->flags);
+
+    // If prev task is TASK_RUNNING, record its start time
+    if (prev_flags & (1 << 0)) {
+        bpf_map_update_elem(&start_time, &prev_pid, &ts, BPF_ANY);
     }
 
-    // Check if the next task's start time is stored
-    start_ts = bpf_map_lookup_elem(&start_time, &next_pid);
-    if (start_ts) {
-        delta = ts - *start_ts;  // Calculate off-CPU time (in nanoseconds)
-
-        // Convert the time from nanoseconds to microseconds
-        u64 key = delta / 1000;
-
-        // Look up the corresponding histogram bucket
+    // Check if the task being switched in has a start time recorded
+    value = bpf_map_lookup_elem(&start_time, &next_pid);
+    if (value) {
+        u64 delta = ts - *value;  // Calculate the latency
+        key = delta / 1000;       // Convert to microseconds
         u64 *count = bpf_map_lookup_elem(&offcpu_histogram, &key);
+
         if (count) {
-            (*count)++;  // Increment the bucket count if it exists
+            (*count)++;  // Increment the histogram bucket
         } else {
             u64 init_val = 1;
-            bpf_map_update_elem(&offcpu_histogram, &key, &init_val, BPF_ANY);  // Create a new bucket
+            bpf_map_update_elem(&offcpu_histogram, &key, &init_val, BPF_ANY);
         }
 
-        // Clean up: remove the start time after use
+        // Remove the start time entry
         bpf_map_delete_elem(&start_time, &next_pid);
     }
 
     return 0;
 }
 
-// Attach to the sched_switch tracepoint
-SEC("tracepoint/sched/sched_switch")
-int handle_sched_switch(struct task_struct *prev, struct task_struct *next) {
-    return trace_sched_switch(prev, next);
-}
-
-// License for the eBPF program
 char LICENSE[] SEC("license") = "GPL";
