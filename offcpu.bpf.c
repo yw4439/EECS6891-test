@@ -1,7 +1,16 @@
 #include <linux/bpf.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_core_read.h>
-#include <linux/types.h>
+#include <linux/types.h>  // This should define u32, u64 and other types
+
+// Define u32 and u64 explicitly if they are still undefined
+#ifndef u32
+#define u32 __u32
+#endif
+
+#ifndef u64
+#define u64 __u64
+#endif
 
 struct hist_key {
     u64 slot;
